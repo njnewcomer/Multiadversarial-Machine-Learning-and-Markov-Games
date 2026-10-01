@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DQN Hyperparameter Experiments</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#f5f6fa;color:#1a1a2e;padding:28px 20px;}
+.page{max-width:960px;margin:0 auto;}
+h1{font-size:20px;font-weight:700;margin-bottom:4px;}
+.sub{font-size:13px;color:#666;margin-bottom:24px;}
+
+.note{background:#fff;border-radius:12px;padding:14px 18px;margin-bottom:20px;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:4px solid #3b82f6;font-size:13px;color:#444;line-height:1.7;}
+.note strong{color:#1a1a2e;}
+
+/* Group sections */
+.group{background:#fff;border-radius:14px;padding:20px;margin-bottom:16px;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);}
+.group h2{font-size:13px;font-weight:700;color:#888;text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:14px;}
+
+/* Bar chart rows */
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;}
+.bar-lbl{font-size:12px;font-weight:600;width:130px;text-align:right;color:#555;flex-shrink:0;}
+.bar-track{flex:1;background:#f0f0f0;border-radius:4px;height:24px;overflow:hidden;position:relative;}
+.bar-fill{height:100%;border-radius:4px;display:flex;align-items:center;
+  padding-left:8px;font-size:11px;font-weight:700;color:#fff;transition:width .4s;}
+.bar-pct{font-size:12px;font-family:monospace;width:44px;color:#555;flex-shrink:0;}
+.bar-win{background:#f59e0b;position:absolute;top:0;height:100%;border-right:2px dashed #888;opacity:.4;}
+
+/* Top result highlight */
+.top-badge{display:inline-block;background:#fef3c7;color:#b45309;border-radius:5px;
+  padding:2px 7px;font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle;}
+
+/* Summary table */
+.summary{background:#fff;border-radius:14px;padding:20px;margin-bottom:16px;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);}
+.summary h2{font-size:13px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{background:#f8f9fa;color:#555;padding:8px 12px;text-align:left;border-bottom:2px solid #e8e8e8;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
+td{padding:8px 12px;border-bottom:1px solid #f0f0f0;}
+tr:last-child td{border:none;}
+.rank1{color:#16a34a;font-weight:700;}
+.rank2{color:#2563eb;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>DQN Hyperparameter Experiments — Soccer Markov Game</h1>
+<div class="sub">16 experiments across 6 hyperparameter axes &middot; Metric: policy agreement % vs exact minimax baseline &middot; Random baseline = 25%</div>
+
+<div class="note">
+  <strong>What we're measuring:</strong> How closely does DQN's greedy policy match the exact minimax solution computed by value iteration?
+  25% = random (4 actions). Higher = better approximation of the optimal policy.
+  All experiments: 4,000 episodes, &gamma;=0.9, pure &plusmn;1 reward, deterministic A10 transitions.
+</div>
+
+<div id="groups"></div>
+
+<div class="summary">
+  <h2>Full Rankings</h2>
+  <table>
+    <tr><th>#</th><th>Experiment</th><th>Group</th><th>Agreement %</th><th>vs Random</th></tr>
+    <tbody id="ranking-body"></tbody>
+  </table>
+</div>
+
+<div class="note" style="border-color:#16a34a;">
+  <strong>Key findings:</strong>
+  <br>&bull; <strong>Slow epsilon decay</strong> wins (54.3%) &mdash; more exploration time lets DQN discover more of the state space before committing.
+  <br>&bull; <strong>Self-play opponent</strong> (50.4%) outperforms minimax opponent (44.3%) &mdash; playing against itself creates diverse training situations.
+  <br>&bull; <strong>LR=5e-4</strong> is the sweet spot &mdash; 1e-2 overshoots (38%), 1e-4 underfits (45.5%).
+  <br>&bull; All configs significantly beat random (25%) but fall short of exact (100%) &mdash; this is the expected DQN vs tabular gap.
+  <br>&bull; Network size and depth matter less than exploration strategy.
+</div>
+</div>
+
+<script>
+var DATA=[{"name":"LR=1e-2","agree":38.0,"curve":[],"group":"Learning Rate"},{"name":"LR=1e-3","agree":44.7,"curve":[],"group":"Learning Rate"},{"name":"LR=5e-4","agree":49.2,"curve":[],"group":"Learning Rate"},{"name":"LR=1e-4","agree":45.5,"curve":[],"group":"Learning Rate"},{"name":"H=32","agree":41.9,"curve":[],"group":"Network Size"},{"name":"H=128","agree":48.4,"curve":[],"group":"Network Size"},{"name":"H=256","agree":47.5,"curve":[],"group":"Network Size"},{"name":"3 Layers","agree":43.4,"curve":[],"group":"Network Size"},{"name":"Opp=Self","agree":50.4,"curve":[],"group":"Opponent"},{"name":"Opp=Minimax","agree":44.3,"curve":[],"group":"Opponent"},{"name":"Tgt=100","agree":40.8,"curve":[],"group":"Target Update"},{"name":"Tgt=2000","agree":44.2,"curve":[],"group":"Target Update"},{"name":"Batch=32","agree":46.1,"curve":[],"group":"Batch Size"},{"name":"Batch=256","agree":50.2,"curve":[],"group":"Batch Size"},{"name":"Eps=slow","agree":54.3,"curve":[],"group":"Epsilon Decay"},{"name":"Eps=fast","agree":45.2,"curve":[],"group":"Epsilon Decay"},{"name":"Random (baseline)","agree":25.0,"curve":[],"group":"Baseline"}];
+
+var GROUPS={
+  'Learning Rate':['LR=1e-2','LR=1e-3','LR=5e-4','LR=1e-4'],
+  'Network Size':['H=32','H=128','H=256','3 Layers'],
+  'Opponent':['Opp=Self','Opp=Minimax'],
+  'Target Update':['Tgt=100','Tgt=2000'],
+  'Batch Size':['Batch=32','Batch=256'],
+  'Epsilon Decay':['Eps=slow','Eps=fast'],
+};
+
+var COLORS=['#3b82f6','#f59e0b','#8b5cf6','#10b981','#ef4444','#ec4899'];
+var lookup={};
+DATA.forEach(function(d){ lookup[d.name]=d; });
+
+var best=DATA.reduce(function(a,b){return a.agree>b.agree?a:b;});
+var maxAgree=best.agree;
+
+var gc=document.getElementById('groups');
+Object.keys(GROUPS).forEach(function(grp,gi){
+  var names=GROUPS[grp];
+  var col=COLORS[gi];
+  var grpBest=names.reduce(function(a,b){
+    var av=lookup[a]?lookup[a].agree:0,bv=lookup[b]?lookup[b].agree:0;
+    return av>bv?a:b;
+  });
+  var html='<div class="group"><h2>'+grp+'</h2>';
+  names.forEach(function(name){
+    var d=lookup[name]; if(!d) return;
+    var isTop=d.agree===maxAgree;
+    var isGrpBest=name===grpBest;
+    var pct=d.agree;
+    var w=(pct/70*100).toFixed(1); // scale to 70% max for visual
+    html+='<div class="bar-row">'+
+      '<div class="bar-lbl">'+name+(isTop?'<span class="top-badge">BEST</span>':'')+'</div>'+
+      '<div class="bar-track">'+
+        '<div class="bar-win" style="width:'+(25/70*100).toFixed(1)+'%"></div>'+
+        '<div class="bar-fill" style="width:'+w+'%;background:'+col+';opacity:'+(isGrpBest?1:0.6)+'">'+pct+'%</div>'+
+      '</div>'+
+      '<div class="bar-pct">'+pct+'%</div>'+
+    '</div>';
+  });
+  html+='</div>';
+  gc.innerHTML+=html;
+});
+
+// Rankings table
+var sorted=DATA.slice().sort(function(a,b){return b.agree-a.agree;});
+var tb=document.getElementById('ranking-body');
+sorted.forEach(function(d,i){
+  var cls=i===0?'rank1':i===1||i===2?'rank2':'';
+  var grp='';
+  Object.keys(GROUPS).forEach(function(g){ if(GROUPS[g].indexOf(d.name)>=0) grp=g; });
+  if(!grp) grp=d.group||'Baseline';
+  var lift=(d.agree-25).toFixed(1);
+  tb.innerHTML+='<tr>'+
+    '<td class="'+cls+'">'+(i+1)+'</td>'+
+    '<td class="'+cls+'">'+d.name+'</td>'+
+    '<td style="color:#888;font-size:12px">'+grp+'</td>'+
+    '<td class="'+cls+'"><strong>'+d.agree+'%</strong></td>'+
+    '<td style="color:#16a34a;font-size:12px">+'+lift+'pp</td>'+
+  '</tr>';
+});
+</script>
+</body>
+</html>
