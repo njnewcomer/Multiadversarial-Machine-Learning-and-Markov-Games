@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PG vs DQN — Soccer Markov Game</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#f5f6fa;color:#1a1a2e;padding:24px 16px;}
+.page{max-width:1000px;margin:0 auto;}
+h1{font-size:20px;font-weight:700;margin-bottom:4px;}
+.sub{font-size:13px;color:#666;margin-bottom:20px;}
+.tabs{display:flex;gap:0;margin-bottom:20px;border-radius:10px;overflow:hidden;border:1.5px solid #d0d0e0;background:#fff;width:fit-content;}
+.tab{padding:9px 24px;border:none;background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:#888;transition:all .15s;}
+.tab.on{background:#1a1a2e;color:#fff;}
+.panel{display:none;} .panel.on{display:block;}
+.summary{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+.scard{background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 2px 8px rgba(0,0,0,.06);flex:1;min-width:140px;text-align:center;}
+.scard .val{font-size:28px;font-weight:800;}
+.scard .lbl{font-size:11px;color:#888;margin-top:3px;}
+.card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin-bottom:14px;}
+.card h2{font-size:12px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;}
+.group-lbl{font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;margin-top:14px;}
+.group-lbl:first-child{margin-top:0;}
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:5px;}
+.bar-lbl{font-size:12px;font-weight:600;width:140px;text-align:right;color:#555;flex-shrink:0;}
+.bar-track{flex:1;background:#f0f0f0;border-radius:4px;height:22px;overflow:hidden;position:relative;}
+.bar-fill{height:100%;border-radius:4px;display:flex;align-items:center;padding-left:8px;font-size:11px;font-weight:700;color:#fff;}
+.bar-ref{position:absolute;top:0;height:100%;border-right:2px dashed #ccc;background:rgba(200,200,200,.15);}
+.bar-pct{font-size:12px;font-family:monospace;width:40px;color:#666;flex-shrink:0;}
+.best-tag{background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;margin-left:4px;}
+.note{border-left:4px solid #3b82f6;padding:12px 16px;font-size:13px;color:#444;line-height:1.8;margin-top:4px;}
+.note strong{color:#1a1a2e;}
+/* Comparison table */
+.cmp-table{width:100%;border-collapse:collapse;font-size:13px;}
+.cmp-table th{background:#f8f9fa;color:#555;padding:9px 12px;text-align:left;border-bottom:2px solid #e8e8e8;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
+.cmp-table td{padding:9px 12px;border-bottom:1px solid #f0f0f0;}
+.cmp-table tr:last-child td{border:none;}
+.winner{color:#16a34a;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Policy Gradient vs DQN — Soccer Markov Game</h1>
+<div class="sub">Manual implementation of both algorithms &middot; Metric: policy agreement % vs exact minimax &middot; Random baseline = 25%</div>
+
+<div class="tabs">
+  <button class="tab on" onclick="show('pg')">Policy Gradient (REINFORCE)</button>
+  <button class="tab"    onclick="show('dqn')">DQN</button>
+  <button class="tab"    onclick="show('cmp')">Comparison</button>
+</div>
+
+<!-- PG Panel -->
+<div class="panel on" id="panel-pg">
+  <div class="summary">
+    <div class="scard"><div class="val" style="color:#8b5cf6">62.2%</div><div class="lbl">Best PG (LR=1e-3)</div></div>
+    <div class="scard"><div class="val">25%</div><div class="lbl">Random baseline</div></div>
+    <div class="scard"><div class="val">100%</div><div class="lbl">Exact minimax</div></div>
+    <div class="scard"><div class="val" style="color:#16a34a">+37.2pp</div><div class="lbl">Above random</div></div>
+  </div>
+  <div class="card">
+    <h2>Hyperparameter Sweep</h2>
+    <div id="pg-bars"></div>
+  </div>
+  <div class="note">
+    <strong>Key PG findings:</strong><br>
+    &bull; <strong>LR=1e-3 wins at 62.2%</strong> — outperforms best DQN (54.3%) on this metric.<br>
+    &bull; <strong>Whitened returns (57.5%)</strong> — normalizing returns to zero mean / unit std is the second-best trick.<br>
+    &bull; <strong>Mean baseline (default, 62.2%)</strong> — subtracting mean return reduces variance effectively.<br>
+    &bull; <strong>Entropy bonus hurts</strong> — adding entropy regularization degrades performance here; the game already provides enough exploration via the stochastic policy.<br>
+    &bull; Most configs collapse to 38.2% — this is a pathological fixed point where the policy agrees with minimax on all states where minimax says U (which is 38% of states). Getting out of this requires the right LR.
+  </div>
+</div>
+
+<!-- DQN Panel -->
+<div class="panel" id="panel-dqn">
+  <div class="summary">
+    <div class="scard"><div class="val" style="color:#3b82f6">54.3%</div><div class="lbl">Best DQN (Eps=slow)</div></div>
+    <div class="scard"><div class="val">25%</div><div class="lbl">Random baseline</div></div>
+    <div class="scard"><div class="val">100%</div><div class="lbl">Exact minimax</div></div>
+    <div class="scard"><div class="val" style="color:#16a34a">+29.3pp</div><div class="lbl">Above random</div></div>
+  </div>
+  <div class="card">
+    <h2>Hyperparameter Sweep</h2>
+    <div id="dqn-bars"></div>
+  </div>
+</div>
+
+<!-- Comparison Panel -->
+<div class="panel" id="panel-cmp">
+  <div class="card">
+    <h2>Algorithm Comparison</h2>
+    <table class="cmp-table">
+      <tr><th>Metric</th><th>Policy Gradient (REINFORCE)</th><th>DQN</th><th>Winner</th></tr>
+      <tr><td>Best policy agreement</td><td class="winner">62.2% (LR=1e-3)</td><td>54.3% (Eps=slow)</td><td class="winner">PG</td></tr>
+      <tr><td>Random baseline</td><td colspan="2" style="text-align:center;color:#888">25% (both)</td><td>—</td></tr>
+      <tr><td>Best LR</td><td class="winner">1e-3</td><td>5e-4</td><td>—</td></tr>
+      <tr><td>Best opponent</td><td>Random</td><td>Self-play</td><td>—</td></tr>
+      <tr><td>Key tuning factor</td><td class="winner">Learning rate</td><td>Epsilon decay</td><td>—</td></tr>
+      <tr><td>Replay buffer needed</td><td style="color:#16a34a">No</td><td style="color:#ef4444">Yes</td><td class="winner">PG</td></tr>
+      <tr><td>Target network needed</td><td style="color:#16a34a">No</td><td style="color:#ef4444">Yes</td><td class="winner">PG</td></tr>
+      <tr><td>Training stability</td><td>High variance per episode</td><td class="winner">More stable (replay buffer)</td><td>DQN</td></tr>
+      <tr><td>Convergence speed</td><td class="winner">Faster (no warm-up)</td><td>Slower (needs buffer fill)</td><td>PG</td></tr>
+    </table>
+    <div class="note" style="margin-top:14px;">
+      <strong>Summary:</strong> PG (REINFORCE) achieves <strong>62.2% policy agreement</strong> vs DQN's 54.3% on this game.
+      PG is simpler — no replay buffer or target network — and converges faster.
+      However, DQN is more stable across hyperparameter settings.
+      The gap between both algorithms and the exact solution (100%) is the
+      <strong>DQN/PG vs tabular gap</strong> — expected on a game this small where exact VI solves in 8 iterations.
+    </div>
+  </div>
+</div>
+
+</div>
+<script>
+var PG=[{"name":"LR=1e-2","agree":38.2,"agree_log":[]},{"name":"LR=1e-3","agree":62.2,"agree_log":[]},{"name":"LR=5e-4","agree":38.2,"agree_log":[]},{"name":"LR=1e-4","agree":38.2,"agree_log":[]},{"name":"No baseline","agree":38.8,"agree_log":[]},{"name":"Whiten returns","agree":57.5,"agree_log":[]},{"name":"Entropy=0","agree":42.7,"agree_log":[]},{"name":"Entropy=0.05","agree":40.3,"agree_log":[]},{"name":"Entropy=0.1","agree":38.5,"agree_log":[]},{"name":"Opp=Self","agree":38.2,"agree_log":[]},{"name":"Opp=Minimax","agree":43.9,"agree_log":[[1,8.2],[211,21.8],[421,3.7],[632,8.3],[842,5.0],[1053,3.9],[1263,24.3],[1474,4.5],[1684,5.1],[1895,5.4],[2105,12.1],[2316,26.3],[2526,44.8],[2737,36.8],[2947,39.5],[3158,13.1],[3368,24.0],[3579,32.1],[3789,33.1],[4000,43.9]]},{"name":"H=128","agree":38.2,"agree_log":[[1,48.6],[211,38.2],[421,38.2],[632,38.2],[842,38.2],[1053,38.2],[1263,38.6],[1474,44.1],[1684,40.4],[1895,40.4],[2105,41.0],[2316,34.9],[2526,42.3],[2737,40.8],[2947,41.4],[3158,43.7],[3368,44.5],[3579,42.9],[3789,38.2],[4000,38.2]]},{"name":"3 Layers","agree":38.2,"agree_log":[[1,38.2],[211,38.2],[421,38.2],[632,38.2],[842,38.2],[1053,38.2],[1263,59.5],[1474,38.2],[1684,38.2],[1895,38.2],[2105,38.2],[2316,38.2],[2526,38.2],[2737,38.2],[2947,38.2],[3158,38.2],[3368,38.2],[3579,38.2],[3789,38.2],[4000,38.2]]},{"name":"Gamma=0.95","agree":38.2,"agree_log":[[1,8.2],[211,38.2],[421,38.2],[632,38.2],[842,38.2],[1053,38.2],[1263,38.2],[1474,38.2],[1684,38.2],[1895,38.2],[2105,38.2],[2316,38.2],[2526,38.2],[2737,38.2],[2947,38.2],[3158,38.2],[3368,38.2],[3579,38.2],[3789,38.2],[4000,38.2]]},{"name":"Gamma=0.99","agree":43.5,"agree_log":[[1,8.2],[211,38.2],[421,38.2],[632,38.2],[842,38.2],[1053,38.2],[1263,42.7],[1474,39.0],[1684,38.7],[1895,38.4],[2105,38.2],[2316,38.2],[2526,38.2],[2737,38.2],[2947,38.2],[3158,38.2],[3368,38.4],[3579,48.5],[3789,38.2],[4000,43.5]]}];
+var DQN=[{"name":"LR=1e-2","agree":38.0,"curve":[],"group":"Learning Rate"},{"name":"LR=1e-3","agree":44.7,"curve":[],"group":"Learning Rate"},{"name":"LR=5e-4","agree":49.2,"curve":[],"group":"Learning Rate"},{"name":"LR=1e-4","agree":45.5,"curve":[],"group":"Learning Rate"},{"name":"H=32","agree":41.9,"curve":[],"group":"Network Size"},{"name":"H=128","agree":48.4,"curve":[],"group":"Network Size"},{"name":"H=256","agree":47.5,"curve":[],"group":"Network Size"},{"name":"3 Layers","agree":43.4,"curve":[],"group":"Network Size"},{"name":"Opp=Self","agree":50.4,"curve":[],"group":"Opponent"},{"name":"Opp=Minimax","agree":44.3,"curve":[],"group":"Opponent"},{"name":"Tgt=100","agree":40.8,"curve":[],"group":"Target Update"},{"name":"Tgt=2000","agree":44.2,"curve":[],"group":"Target Update"},{"name":"Batch=32","agree":46.1,"curve":[],"group":"Batch Size"},{"name":"Batch=256","agree":50.2,"curve":[],"group":"Batch Size"},{"name":"Eps=slow","agree":54.3,"curve":[],"group":"Epsilon Decay"},{"name":"Eps=fast","agree":45.2,"curve":[],"group":"Epsilon Decay"},{"name":"Random (baseline)","agree":25.0,"curve":[],"group":"Baseline"}];
+
+var PG_GROUPS={"Learning Rate": ["LR=1e-2", "LR=1e-3", "LR=5e-4", "LR=1e-4"], "Baseline": ["No baseline", "Whiten returns"], "Entropy": ["Entropy=0", "Entropy=0.05", "Entropy=0.1"], "Opponent": ["Opp=Self", "Opp=Minimax"], "Network": ["H=128", "3 Layers"], "Gamma": ["Gamma=0.95", "Gamma=0.99"]};
+var DQN_GROUPS={"Learning Rate": ["LR=1e-2", "LR=1e-3", "LR=5e-4", "LR=1e-4"], "Network Size": ["H=32", "H=128", "H=256", "3 Layers"], "Opponent": ["Opp=Self", "Opp=Minimax"], "Target Update": ["Tgt=100", "Tgt=2000"], "Batch Size": ["Batch=32", "Batch=256"], "Epsilon Decay": ["Eps=slow", "Eps=fast"]};
+var COLS=['#8b5cf6','#ef4444','#f59e0b','#10b981','#3b82f6','#ec4899'];
+var DQN_COLS=['#3b82f6','#8b5cf6','#ef4444','#f59e0b','#10b981','#ec4899'];
+
+function show(tab){
+  document.querySelectorAll('.tab').forEach(function(t,i){
+    t.className='tab'+((['pg','dqn','cmp'][i])===tab?' on':'');
+  });
+  document.querySelectorAll('.panel').forEach(function(p){p.className='panel';});
+  document.getElementById('panel-'+tab).className='panel on';
+}
+
+function buildBars(data, groups, colors, containerId){
+  var lkp={}; data.forEach(function(d){lkp[d.name]=d;});
+  var bestAll=data.reduce(function(a,b){return a.agree>b.agree?a:b;});
+  var html='';
+  Object.keys(groups).forEach(function(grp,gi){
+    var names=groups[grp]; var col=colors[gi];
+    var grpBest=names.reduce(function(a,b){
+      return (lkp[a]?lkp[a].agree:0)>(lkp[b]?lkp[b].agree:0)?a:b;
+    });
+    html+='<div class="group-lbl">'+grp+'</div>';
+    names.forEach(function(name){
+      var d=lkp[name]; if(!d) return;
+      var pct=d.agree; var isTop=d.agree===bestAll.agree; var isGrpBest=name===grpBest;
+      var w=(pct/75*100).toFixed(1);
+      html+='<div class="bar-row">'+
+        '<div class="bar-lbl">'+name+(isTop?'<span class="best-tag">BEST</span>':'')+'</div>'+
+        '<div class="bar-track">'+
+          '<div class="bar-ref" style="width:'+(25/75*100).toFixed(1)+'%"></div>'+
+          '<div class="bar-fill" style="width:'+w+'%;background:'+col+';opacity:'+(isGrpBest?1:0.55)+'">'+pct+'%</div>'+
+        '</div>'+
+        '<div class="bar-pct">'+pct+'%</div>'+
+      '</div>';
+    });
+  });
+  document.getElementById(containerId).innerHTML=html;
+}
+
+buildBars(PG, PG_GROUPS, COLS, 'pg-bars');
+buildBars(DQN, DQN_GROUPS, DQN_COLS, 'dqn-bars');
+</script>
+</body>
+</html>
