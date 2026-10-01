@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mixed Nash — Interesting States</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',sans-serif;background:#0f1117;color:#e0e0e0;padding:28px 20px;}
+.page{max-width:900px;margin:0 auto;}
+h1{color:#c4a0ff;font-size:22px;text-align:center;margin-bottom:4px;}
+.credit{text-align:center;font-size:12px;color:#555;margin-bottom:20px;}
+.credit a{color:#888;text-decoration:none;}
+.tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap;}
+.tab{padding:8px 14px;border-radius:14px;border:1px solid #2a2d3e;background:#1a1d2e;color:#666;cursor:pointer;font-size:12px;transition:all .15s;}
+.tab:hover{border-color:#6a3a8a;color:#a070d0;}
+.tab.on{background:#2a1a3a;color:#c4a0ff;border-color:#8a4af0;}
+.card{background:#1a1d2e;border-radius:14px;padding:22px;border:1px solid #2a2d3e;}
+.card-top{margin-bottom:16px;}
+.sit-label{font-size:20px;font-weight:700;color:#c4a0ff;margin-bottom:4px;}
+.sit-coords{font-size:12px;color:#555;margin-bottom:12px;font-family:monospace;}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+.bdg{border-radius:8px;padding:5px 13px;font-size:12px;font-weight:600;}
+.layout{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;}
+/* Board */
+.board-wrap{flex:0 0 auto;}
+.board-svg{display:block;}
+/* Right panel */
+.panel{flex:1;min-width:240px;}
+.panel-sec{font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;margin-top:16px;}
+.panel-sec:first-child{margin-top:0;}
+/* Prob bars */
+.prow{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.parr{width:28px;text-align:center;}
+.ptrk{flex:1;background:#0a0c14;border-radius:4px;height:26px;overflow:hidden;}
+.pfil{height:100%;border-radius:4px;display:flex;align-items:center;padding-left:8px;font-size:11px;font-weight:700;color:rgba(0,0,0,.85);}
+.ppct{font-size:12px;font-family:monospace;width:36px;text-align:right;}
+/* Q matrix */
+.qmat{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px;}
+.qmat th{background:#0a0c14;color:#555;padding:5px 7px;text-align:center;border:1px solid #0f1117;font-weight:500;}
+.qmat td{padding:5px 7px;text-align:center;border:1px solid #0f1117;font-family:monospace;font-size:10px;}
+.qmat .rl{color:#7eb8f7;font-weight:600;background:#0a0c14;}
+.qmat .nash{background:#2a1a3a;color:#c4a0ff;font-weight:700;}
+.qmat .best{background:#1a3a10;color:#7ef7a0;font-weight:700;}
+/* Why box */
+.why{background:#0a0c14;border-radius:8px;padding:12px 14px;font-size:12px;color:#888;line-height:1.8;margin-top:14px;border-left:3px solid #c4a0ff;}
+.why strong{color:#c4a0ff;}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>&#127922; Mixed Nash Equilibrium — Interesting States</h1>
+<div class="credit">
+  CS 298 Directed Study &middot; UW-Madison &middot; Pure &plusmn;1 reward &middot; Stochastic transition (Littman 1994)
+</div>
+<div class="tabs" id="tabs"></div>
+<div id="card"></div>
+</div>
+
+<script>
+var DATA = [{"s":[0,1,1,2,0],"label":"Both Move Up \u2014 P1 Blocks","explain":"P0 holds ball at left edge, P1 one step right and above. Both mix between up and another direction. P0 going up avoids P1; P1 going up threatens from above.","V":-0.0612,"ent":0.6501,"dist":2,"p0":[0.62,0.38,0.0,0.0],"p1":[0.0,1.0,0.0,0.0],"p0_fracs":["0.62","0.38","0","0"],"p1_fracs":["0","1.0","0","0"],"Q":[[-0.0496,-0.0496,-0.3574,-0.0496],[0.4783,-0.0824,0.4783,-0.0238],[0.0,0.0,0.0,0.0],[0.5314,-0.2017,0.5314,-0.0152]]},{"s":[0,3,1,2,0],"label":"Both Move Down \u2014 P1 Blocks (mirror)","explain":"Mirror of State 1 reflected vertically. P0 holds ball, P1 below. Both primarily move down.","V":-0.0612,"ent":0.6501,"dist":2,"p0":[0.38,0.62,0.0,0.0],"p1":[1.0,0.0,0.0,0.0],"p0_fracs":["0.38","0.62","0","0"],"p1_fracs":["1.0","0","0","0"],"Q":[[-0.0824,0.4783,0.4783,-0.0238],[-0.0496,-0.0496,-0.3574,-0.0496],[0.0,0.0,0.0,0.0],[-0.2017,0.5314,0.5314,-0.0152]]},{"s":[0,0,1,1,0],"label":"Corner \u2014 Both Move Up","explain":"P0 at bottom-left corner, P1 diagonally up-right. P0 mixes up and right. P1 mixes down and left. Corner geometry limits options.","V":-0.0916,"ent":0.6101,"dist":2,"p0":[0.7,0.0,0.0,0.3],"p1":[0.0,0.86,0.14,0.0],"p0_fracs":["0.7","0","0","0.3"],"p1_fracs":["0","0.86","0.14","0"],"Q":[[-0.0551,-0.0446,-0.3574,-0.0446],[0.0,0.0,0.0,0.0],[0.0,0.0,0.0,0.0],[0.5314,-0.2017,0.5314,-0.0264]]},{"s":[0,4,1,3,0],"label":"Corner \u2014 Both Move Down (mirror)","explain":"Mirror of State 3 at top-left. P0 mixes down and right. P1 mixes up and left.","V":-0.0916,"ent":0.6101,"dist":2,"p0":[0.0,0.7,0.0,0.3],"p1":[0.86,0.0,0.14,0.0],"p0_fracs":["0","0.7","0","0.3"],"p1_fracs":["0.86","0","0.14","0"],"Q":[[0.0,0.0,0.0,0.0],[-0.0446,-0.0551,-0.3574,-0.0446],[0.0,0.0,0.0,0.0],[-0.2017,0.5314,0.5314,-0.0264]]},{"s":[1,1,2,2,0],"label":"Mid-Board \u2014 Both Move Up","explain":"P0 at left edge middle area, P1 two steps right. P0 mixes up and down. P1 primarily moves down toward P0.","V":-0.0169,"ent":0.5646,"dist":2,"p0":[0.75,0.25,0.0,0.0],"p1":[0.0,1.0,0.0,0.0],"p0_fracs":["0.75","0.25","0","0"],"p1_fracs":["0","1.0","0","0"],"Q":[[-0.0137,-0.0137,-0.2017,-0.0137],[0.5314,-0.0264,0.5314,0.0],[-0.0137,-0.0446,-0.0551,-0.0137],[0.5905,-0.0908,0.5905,0.0]]},{"s":[1,3,2,2,0],"label":"Mid-Board \u2014 Both Move Down (mirror)","explain":"Mirror of State 5. P0 mixes up and down. P1 primarily moves up toward P0.","V":-0.0169,"ent":0.5646,"dist":2,"p0":[0.25,0.75,0.0,0.0],"p1":[1.0,0.0,0.0,0.0],"p0_fracs":["0.25","0.75","0","0"],"p1_fracs":["1.0","0","0","0"],"Q":[[-0.0264,0.5314,0.5314,0.0],[-0.0137,-0.0137,-0.2017,-0.0137],[-0.0446,-0.0137,-0.0551,-0.0137],[-0.0908,0.5905,0.5905,0.0]]}];
+var ACT  = ['U','D','L','R'];
+var ARR  = ['↑','↓','←','→'];
+var ACOL = ['#4a9eff','#ff6b6b','#ffd93d','#6bcb77'];
+var P0C  = '#4af0a0';
+var P1C  = '#f07040';
+var W=7, H=5, CS=72, GAP=4, PAD=10; // cell size, gap, padding
+var cur  = 0;
+
+// ── Tabs ─────────────────────────────────────────────────────────
+function mkTabs(){
+  var el=document.getElementById('tabs'); el.innerHTML='';
+  DATA.forEach(function(d,i){
+    var b=document.createElement('div');
+    b.className='tab'+(i===0?' on':'');
+    b.textContent=(i+1)+'. '+d.label;
+    b.onclick=(function(idx){return function(){
+      cur=idx;
+      document.querySelectorAll('.tab').forEach(function(t,j){t.className='tab'+(j===idx?' on':'');});
+      render();
+    };})(i);
+    el.appendChild(b);
+  });
+}
+
+// ── SVG board with proper arrow markers ──────────────────────────
+function makeSVG(d){
+  var s=d.s, x0=s[0],y0=s[1],x1=s[2],y1=s[3],ball=s[4];
+  var topPad=PAD+18; // extra room for goal labels
+  var bw=PAD*2+W*(CS+GAP)-GAP;
+  var bh=topPad+PAD+H*(CS+GAP)-GAP;
+
+  function cx(x){ return PAD + x*(CS+GAP) + CS/2; }
+  function cy(y){ return topPad + (H-1-y)*(CS+GAP) + CS/2; }
+  function px(x){ return PAD + x*(CS+GAP); }
+  function py(y){ return topPad + (H-1-y)*(CS+GAP); }
+
+  var svg = '';
+  svg += '<svg width="'+(bw+40)+'" height="'+(bh+40)+'" xmlns="http://www.w3.org/2000/svg">';
+
+  // ── Arrow marker defs — one per color+width combo ──
+  // We define markers for P0 (green) and P1 (orange) at different sizes
+  svg += '<defs>';
+
+  // P0 green markers at 3 sizes
+  [6,10,14].forEach(function(sz){
+    svg += '<marker id="arr-p0-'+sz+'" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">';
+    svg += '<path d="M0,0 L8,4 L0,8 L2,4 Z" fill="'+P0C+'"/>';
+    svg += '</marker>';
+  });
+  // P1 orange markers
+  [6,10,14].forEach(function(sz){
+    svg += '<marker id="arr-p1-'+sz+'" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">';
+    svg += '<path d="M0,0 L8,4 L0,8 L2,4 Z" fill="'+P1C+'"/>';
+    svg += '</marker>';
+  });
+
+  svg += '</defs>';
+
+  // ── Background ──
+  svg += '<rect width="'+(bw+40)+'" height="'+(bh+40)+'" fill="#0a0c14" rx="12"/>';
+
+  // ── Goal zones — shaded columns + edge bar + label ──
+  // P1 goal: column x=0 (P0 scores by moving right off x=6... actually P0 scores at x=6 right edge)
+  // P0 attacks RIGHT (scores at x=6 right edge), P1 attacks LEFT (scores at x=0 left edge)
+  // Shade col x=0 in blue (P1's goal, P0 tries to reach)... 
+  // Actually: P0 goal = left side (x<0), P1 goal = right side (x>6)
+  // P0 exits right (x=6, go R) to score. P1 exits left (x=0, go L) to score.
+  // So right column (x=6) is danger for P1 / opportunity for P0
+  //    left column (x=0) is danger for P0 / opportunity for P1
+
+  // Left goal zone (x=0 col) — P1 scores here, so show as P1 territory (orange tint)
+  var goalH=H*(CS+GAP)-GAP;
+  svg += '<rect x="'+PAD+'" y="'+topPad+'" width="'+CS+'" height="'+goalH+'" fill="rgba(240,100,60,0.07)" rx="7"/>';
+  svg += '<rect x="'+PAD+'" y="'+topPad+'" width="5" height="'+goalH+'" fill="#f07040" rx="2"/>';
+  svg += '<text x="'+(PAD+CS/2)+'" y="'+(topPad-6)+'" fill="#f07040" font-size="11" font-weight="bold" text-anchor="middle" font-family="sans-serif">&#9654; P1 GOAL</text>';
+
+  // Right goal zone (x=6 col) — P0 scores here
+  svg += '<rect x="'+(PAD+(W-1)*(CS+GAP))+'" y="'+topPad+'" width="'+CS+'" height="'+goalH+'" fill="rgba(74,240,160,0.07)" rx="7"/>';
+  svg += '<rect x="'+(PAD+W*(CS+GAP)-GAP-5)+'" y="'+topPad+'" width="5" height="'+goalH+'" fill="'+P0C+'" rx="2"/>';
+  svg += '<text x="'+(PAD+(W-1)*(CS+GAP)+CS/2)+'" y="'+(topPad-6)+'" fill="'+P0C+'" font-size="11" font-weight="bold" text-anchor="middle" font-family="sans-serif">P0 GOAL &#9654;</text>';
+
+  // ── Cells ──
+  for(var y=0;y<H;y++){
+    for(var x=0;x<W;x++){
+      var isP0=x===x0&&y===y0, isP1=x===x1&&y===y1;
+      var fill=isP0?(ball===0?'#1a4020':'#0d2a0d'):isP1?(ball===1?'#402010':'#2a0d0d'):'#1a1d2e';
+      var stroke=isP0?P0C:isP1?P1C:'#2a2d3e';
+      var sw=isP0||isP1?2:1;
+      svg += '<rect x="'+px(x)+'" y="'+py(y)+'" width="'+CS+'" height="'+CS+'" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'" rx="7"/>';
+      // Mixed glow
+      if(isP0||isP1){
+        svg += '<rect x="'+(px(x)-2)+'" y="'+(py(y)-2)+'" width="'+(CS+4)+'" height="'+(CS+4)+'" fill="none" stroke="#c4a0ff" stroke-width="2" rx="9" opacity="0.6"/>';
+      }
+      // Coord label
+      svg += '<text x="'+(px(x)+4)+'" y="'+(py(y)+12)+'" fill="#333" font-size="9" font-family="monospace">('+x+','+y+')</text>';
+      // Player label
+      if(isP0||isP1){
+        var col=isP0?P0C:P1C;
+        var lbl=isP0?'P0':'P1';
+        if((isP0&&ball===0)||(isP1&&ball===1)) lbl+=' [B]';
+        svg += '<text x="'+cx(x)+'" y="'+(py(y)+CS-8)+'" fill="'+col+'" font-size="10" font-weight="bold" text-anchor="middle" font-family="sans-serif">'+lbl+'</text>';
+      }
+    }
+  }
+
+  // ── Arrows around P0 ──
+  svg += drawSVGArrows(d.p0, x0, y0, P0C, 'p0', cx, cy, CS, GAP, d.p0_fracs);
+  // ── Arrows around P1 ──
+  svg += drawSVGArrows(d.p1, x1, y1, P1C, 'p1', cx, cy, CS, GAP, d.p1_fracs);
+
+  // ── X axis labels ──
+  for(var x=0;x<W;x++){
+    svg += '<text x="'+cx(x)+'" y="'+(bh+16)+'" fill="#444" font-size="10" text-anchor="middle" font-family="sans-serif">x='+x+'</text>';
+  }
+  // Y axis labels
+  for(var y=0;y<H;y++){
+    svg += '<text x="'+(PAD+W*(CS+GAP)+4)+'" y="'+(cy(y)+4)+'" fill="#333" font-size="9" font-family="monospace">y='+y+'</text>';
+  }
+
+  svg += '</svg>';
+  return svg;
+}
+
+function drawSVGArrows(pi, px0, py0, col, pid, cx, cy, CS, GAP, fracs){
+  var fracMap = fracs || [];
+
+  // Directions: U(0)=up, D(1)=down, L(2)=left, R(3)=right
+  var dirs=[[0,1],[0,-1],[-1,0],[1,0]]; // board delta
+  var out='';
+  var maxP=Math.max.apply(null,pi);
+
+  for(var a=0;a<4;a++){
+    var p=pi[a]; if(p<0.03) continue;
+    var dx=dirs[a][0], dy=dirs[a][1];
+    // Check neighbor is on board
+    var nx=px0+dx, ny=py0+dy;
+    if(nx<0||nx>=W||ny<0||ny>=H) continue;
+
+    // Thickness and opacity scale with probability
+    var thick = Math.max(1.5, Math.round(6*p));  // 1.5px min, 6px at p=1
+    var opacity = 0.5 + 0.5*p;                   // 0.5 min, 1.0 at p=1
+
+    // Start: edge of player cell (30% from center toward neighbor)
+    var x1 = cx(px0) + dx*(CS*0.38);
+    var y1 = cy(py0) - dy*(CS*0.38);  // SVG y is flipped vs board y
+    // End: center of neighbor cell (but pull back for arrowhead)
+    var x2 = cx(nx) - dx*(CS*0.18);
+    var y2 = cy(ny) + dy*(CS*0.18);
+
+    // Marker id based on thickness bucket
+    var msz = thick<=7?6:thick<=11?10:14;
+    var mid='arr-'+pid+'-'+msz;
+
+    // Shadow for contrast
+    out += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"'+
+           ' stroke="rgba(0,0,0,0.5)" stroke-width="'+(thick+2)+'" stroke-linecap="round" opacity="'+opacity+'"/>';
+
+    // Main arrow line with marker
+    out += '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"'+
+           ' stroke="'+col+'" stroke-width="'+thick+'" stroke-linecap="round"'+
+           ' marker-end="url(#'+mid+')" opacity="'+opacity+'"/>';
+
+    // Fraction label — positioned at midpoint, offset perpendicular
+    var mx=(x1+x2)/2, my=(y1+y2)/2;
+    var perpX=dy*14, perpY=dx*14; // perpendicular offset
+    var fracLabel = fracMap[a] || (Math.round(p*100)+'%');
+    var lblW = fracLabel.length>3?32:24;
+    // Background pill
+    out += '<rect x="'+(mx+perpX-lblW/2)+'" y="'+(my-perpY-9)+'" width="'+lblW+'" height="16" rx="5"'+
+           ' fill="rgba(10,12,20,0.9)" opacity="'+Math.min(1,opacity+0.2)+'"/>';
+    // Text
+    out += '<text x="'+(mx+perpX)+'" y="'+(my-perpY+5)+'"'+
+           ' fill="'+col+'" font-size="11" font-weight="bold" text-anchor="middle"'+
+           ' font-family="sans-serif" opacity="1">'+fracLabel+'</text>';
+  }
+  return out;
+}
+
+// ── Probability bars ──────────────────────────────────────────────
+function probBars(pi, label, fracs){
+  var h='<div class="panel-sec">'+label+'</div>';
+  var mx=Math.max.apply(null,pi);
+  pi.forEach(function(p,i){
+    var w=Math.round(p*100); if(w===0) return;
+    var fracLbl = (fracs && fracs[i] && fracs[i]!=='0') ? fracs[i] : w+'%';
+    h+='<div class="prow">'+
+      '<div class="parr" style="color:'+ACOL[i]+';font-size:'+(p===mx?22:15)+'px">'+ARR[i]+'</div>'+
+      '<div class="ptrk"><div class="pfil" style="width:'+w+'%;background:'+ACOL[i]+'">'+(w>10?ACT[i]+'='+fracLbl:'')+'</div></div>'+
+      '<div class="ppct" style="color:'+ACOL[i]+'">'+fracLbl+'</div>'+
+    '</div>';
+  });
+  return h;
+}
+
+// ── Q matrix ─────────────────────────────────────────────────────
+function qMatrix(Q, p0, p1){
+  var p0a=[],p1a=[];
+  p0.forEach(function(v,i){if(v>0.01)p0a.push(i);});
+  p1.forEach(function(v,i){if(v>0.01)p1a.push(i);});
+  var bv=-99,bi=0,bj=0;
+  for(var i=0;i<4;i++) for(var j=0;j<4;j++) if(Q[i][j]>bv){bv=Q[i][j];bi=i;bj=j;}
+  var h='<div class="panel-sec">Q-Matrix &mdash; <span style="color:#c4a0ff">purple</span>=Nash cells &middot; <span style="color:#7ef7a0">green</span>=best</div>';
+  h+='<table class="qmat"><tr><th>P0&#8595; P1&#8594;</th>';
+  ACT.forEach(function(a,i){h+='<th style="color:'+ACOL[i]+'">'+ARR[i]+' '+a+'</th>';});
+  h+='</tr>';
+  for(var i=0;i<4;i++){
+    h+='<tr><td class="rl" style="color:'+ACOL[i]+'">'+ARR[i]+' '+ACT[i]+'</td>';
+    for(var j=0;j<4;j++){
+      var nash=p0a.indexOf(i)>=0&&p1a.indexOf(j)>=0;
+      var best=i===bi&&j===bj&&!nash;
+      var cls=nash?'nash':best?'best':'';
+      var v=Q[i][j];
+      h+='<td class="'+cls+'">'+(Math.abs(v)<0.001?'0':v>0?'+'+v.toFixed(3):v.toFixed(3))+'</td>';
+    }
+    h+='</tr>';
+  }
+  return h+'</table>';
+}
+
+// ── Render ────────────────────────────────────────────────────────
+function render(){
+  var d=DATA[cur];
+  var s=d.s;
+  var vc=d.V>0.01?'#7ef7a0':d.V<-0.01?'#ff8080':'#aaa';
+  var vsign=d.V>0?'+':'';
+  var vbg=d.V>0.01?'#1a3a10':'#3a1010';
+
+  document.getElementById('card').innerHTML=
+  '<div class="card">'+
+    '<div class="card-top">'+
+      '<div class="sit-label">'+(cur+1)+'. '+d.label+'</div>'+
+      '<div class="sit-coords">P0=('+s[0]+','+s[1]+') &nbsp; P1=('+s[2]+','+s[3]+') &nbsp; Ball=P'+s[4]+'</div>'+
+      '<div class="badges">'+
+        '<span class="bdg" style="background:'+vbg+';color:'+vc+'">Value = '+vsign+d.V+'</span>'+
+        '<span class="bdg" style="background:#1a2a3a;color:#7eb8f7">Distance = '+d.dist+'</span>'+
+        '<span class="bdg" style="background:#2a1a3a;color:#c4a0ff">Entropy = '+d.ent.toFixed(3)+'</span>'+
+        '<span class="bdg" style="background:#1a1a2a;color:#888">Mixed NE</span>'+
+      '</div>'+
+    '</div>'+
+    '<div class="layout">'+
+      '<div class="board-wrap">'+makeSVG(d)+'</div>'+
+      '<div class="panel">'+
+        probBars(d.p0,'<span style="color:'+P0C+'">&#9632;</span> P0 Mixed Strategy &mdash; arrow size = probability',d.p0_fracs)+
+        probBars(d.p1,'<span style="color:'+P1C+'">&#9632;</span> P1 Mixed Strategy &mdash; arrow size = probability',d.p1_fracs)+
+        qMatrix(d.Q,d.p0,d.p1)+
+        '<div class="why"><strong>Why mixing is required:</strong> '+d.explain+'</div>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+mkTabs();
+render();
+</script>
+</body>
+</html>
