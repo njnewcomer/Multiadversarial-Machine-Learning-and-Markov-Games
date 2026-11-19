@@ -1,0 +1,328 @@
+THE PITCH: PHYSICS AND IMPLEMENTATION
+=====================================
+
+Nov 18, 2026 · Nick Newcomer
+
+Step 1 built our own 1 v 1 continuous-action soccer game, the Pitch, and two fixed yardstick players, with no learning. This doc covers every rule and every equation behind it, in the Python code and the single-file live simulation. Every physics check passed. The scripted chaser beats a random player 93% of the time, two chasers split evenly, and two random players never score.
+
+SUMMARY
+-------
+
+- What it is: a 2-D soccer game in Python with NumPy only, written from scratch (no game engine or physics library). Two disc-shaped players push a ball around a walled pitch and score by getting it fully into the opponent's net. The same game runs live in the browser from one HTML file.
+- Why it's built this way: it follows the project rules: continuous moves (vx, vy) with no grid, discrete time steps approximating continuous time, a goal-only reward, and one thing added at a time.
+- How outcomes arise: nothing is set to make a colour win. Two hand-written rules (random and chaser) are played against each other thousands of times, and wins, ties and goal times are counted.
+- What step 1 shows for step 2: a random player almost never touches the ball, so a learner starting from random play will rarely see a goal. Plain REINFORCE gets reward only from goals, so we expect it to struggle. That gives the next addition a clear reason.
+- History: the first version was a hockey-style rink with rounded corners. It was changed to a soccer pitch with square corners; the effect of that one change is measured in the results section.
+
+PITCH GEOMETRY AND CONSTANTS
+----------------------------
+
+All lengths are in field units (the pitch is 1.5 long and 1.0 wide) and all times in seconds. The origin is the bottom-left corner of the pitch. The touchlines and goal lines act as walls: the ball never goes out of play.
+
+[Image: the Pitch at kickoff, red on the left, blue on the right, ball at the centre spot, netted goals behind each goal line. See the_pitch_live.html.]
+
+| Name | Value | Meaning |
+| W × H | 1.5 × 1.0 | Pitch size: x from 0 to 1.5 (goal line to goal line), y from 0 to 1 (touchline to touchline) |
+| RC | 0 | Corner radius. 0 means square corners, as on a soccer pitch (the earlier rink used 0.2) |
+| MOUTH | y from 0.35 to 0.65 | Goal opening in the middle of each goal line (width 0.3) |
+| DEPTH | 0.08 | Depth of each goal net behind the goal line |
+| POSTS | (0, 0.35), (0, 0.65), (1.5, 0.35), (1.5, 0.65) | Goal posts, treated as points the ball bounces off |
+| RP | 0.04 | Player radius |
+| RB | 0.025 | Ball radius |
+| V_MAX | 0.6 per second | Player top speed |
+| BALL_VMAX | 1.5 per second | Ball speed cap |
+| FRICTION | 1.0 per second | Ball speed decays as e^(−t): to 37% after 1 second |
+| E_PB | 0.5 | Restitution, player hitting ball |
+| E_BW | 0.8 | Restitution, ball hitting a wall or post |
+| DT | 0.05 | Length of one time step (20 steps per second) |
+| T_MAX | 400 steps | Game length limit, 20 seconds |
+| STALL_STEPS, STALL_DIST | 60 steps, 0.05 | Stall rule: ball moves less than 0.05 in 3 seconds |
+| Kickoff | red (0.25, 0.5), blue (1.25, 0.5), ball (0.75, 0.5) | Start positions, each moved by up to ±0.03 at random |
+
+Red defends the left goal and attacks right; blue defends the right goal and attacks left. The markings drawn in the simulation have no effect on play:
+
+| Marking | Size |
+| Halfway line and centre spot | x = 0.75 |
+| Centre circle | radius 0.12 |
+| Penalty area | 0.22 deep, y from 0.2 to 0.8 |
+| Goal area | 0.08 deep, y from 0.3 to 0.7 |
+| Penalty spot | 0.15 from the goal line |
+| Penalty arc | radius 0.12 around the spot, drawn only outside the penalty area |
+| Corner arcs | radius 0.03 |
+
+BODIES, ACTIONS AND OBSERVATIONS
+--------------------------------
+
+State of one game: 12 numbers. Red's position and velocity, blue's position and velocity, and the ball's position and velocity, each (x, y). Bookkeeping per game: the step count, a done flag, the stall anchor (the ball's position when it last moved 0.05) and the steps since then, and a stall counter.
+
+Action: each player outputs a desired velocity (vx, vy). It is clipped to a disk of radius V_MAX = 0.6, so a diagonal move is no faster than a straight one:
+
+    v = a * min(1, V_MAX / |a|)
+
+The player's velocity is set to this directly each step (no acceleration or momentum). There is no separate kick action: the ball moves only through contact (see Contacts).
+
+Observation: each player sees 8 numbers, always from its own point of view, attacking the goal at x = 1.5:
+
+| Index | Red sees | Blue sees (mirrored) |
+| 0–1 | own position (x, y) | (1.5 − x, y) of its own position |
+| 2–3 | opponent position | mirrored opponent position |
+| 4–5 | ball position | mirrored ball position |
+| 6–7 | ball velocity (vx, vy) | (−vx, vy) |
+
+Blue's action is un-mirrored before it is applied: its vx is negated. Because both colours see the same kind of picture, one policy can play either side, and two copies of the same policy play a fair game.
+
+Batching: every quantity is an array with one row per game, so thousands of games advance together in one step. 2,000 games of 20 seconds take about 1 second on a laptop CPU.
+
+ONE TIME STEP
+-------------
+
+Each call to step advances every game by DT = 0.05 seconds, in this fixed order:
+
+1. Read the actions. Red's desired velocity is used as given. Blue's is un-mirrored (vx negated). Both are clipped to speed 0.6. Games that are already over get zero velocity.
+2. Move the players: position += velocity × 0.05.
+3. Slow and move the ball: velocity ×= e^(−1 × 0.05), capped at speed 1.5, then position += velocity × 0.05.
+4. Resolve contacts, three passes. Each pass, in order:
+   1. push the two players apart if they overlap;
+   2. a coin flip per game decides which player touches the ball first; apply that player's contact with the ball, then the other's;
+   3. push both players back inside the rink;
+   4. bounce the ball off walls, corners, posts and the inside of the goal nets.
+5. Cap the ball's speed at 1.5 again.
+6. Check for goals: the ball's centre is more than one ball radius past a goal line inside the mouth, so the whole ball is in the net.
+7. Check the stall rule and restart stalled games from kickoff.
+8. Advance the clock and end games that scored or reached 400 steps.
+9. Return both observations, both rewards, the done flags, and which games scored, timed out or stalled.
+
+Three contact passes are enough because each pass only moves bodies a little; a body pushed out of one contact into another is fixed on the next pass. The stress test below confirms nothing overlaps or leaves the pitch after the passes.
+
+CONTACTS
+--------
+
+All contacts are positional: overlapping bodies are moved apart along the line between their centres, and only the ball's velocity is changed by a hit. Players have no momentum, so a push never changes a player's next move.
+
+| Contact | What happens |
+| Player–player | If the centres are closer than 0.08, both players move half the overlap apart along the line between them |
+| Player–wall | The player is moved back so its whole disc is on the pitch. Players cannot enter the goal nets |
+| Player–ball | The ball is moved out to touching distance (0.065 from the player's centre). If the ball was moving toward the player relative to it, that relative speed along the contact line is reflected with restitution 0.5 |
+| Ball–wall and corner | The ball is moved back onto the pitch; its velocity component into the wall is reflected with restitution 0.8. In a corner both components are reflected |
+| Ball–net | Inside a goal net the ball bounces off the back of the net and its two sides with restitution 0.8 |
+| Ball–post | Each post is a point. If the ball's centre is within 0.025 of it, the ball is moved out and its velocity toward the post is reflected with restitution 0.8 |
+
+The player–ball hit, with n the unit vector from player to ball, v_p the player's velocity and v_b the ball's:
+
+    if (v_b - v_p) . n < 0:   v_b <- v_b - (1 + 0.5) * ((v_b - v_p) . n) * n
+
+The player is treated as much heavier than the ball. A player running straight into a still ball at speed v sends it off at 1.5v along n, so at top speed the ball leaves at 0.9. This single rule covers dribbling (soft, repeated touches) and shooting (a full-speed run through the ball).
+
+Wall shape. A disc of radius r is clamped to [r, 1.5 − r] × [r, 1 − r], and the push direction is the inward wall normal used for the bounce. The code keeps a corner-radius setting RC: when RC > 0, a disc inside a corner square is also kept within RC − r of that corner's arc centre (the rounded rink). With RC = 0 that test never triggers, so the corners are square.
+
+Goal-mouth entry. The ball counts as in a goal mouth when its centre's y is between 0.35 and 0.65 and it is within one radius of the goal line, or when it is already behind the goal line inside that y-range. Only then may it cross the goal line into the net; everywhere else the goal line stops it like a wall.
+
+THE PHYSICS IN DETAIL
+---------------------
+
+The game is a continuous-time model stepped forward in slices of DT = 0.05 s. This section gives each equation, what it approximates and how big the approximation error is.
+
+Players: velocity control
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A player's velocity is set directly from its action each step, then its position moves:
+
+    v_t = clip_0.6(a_t),    x_(t+1) = x_t + v_t * dt
+
+There is no mass, acceleration or momentum: a player can reverse instantly. This is first-order (kinematic) control, the simplest continuous movement model. Its top speed covers 0.03 per step, so crossing the pitch takes 50 steps (2.5 s).
+
+Ball: rolling with friction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Between contacts the ball follows linear drag, the continuous-time law
+
+    dv/dt = -mu * v,    v(t) = v0 * e^(-mu t),    mu = 1 per second
+
+The code multiplies the velocity by the exact factor e^(−μΔt) = 0.9512 each step, so the speed decay is exact at every step, whatever DT is (the friction check confirms 0.368 after 1 s). The position then moves by the decayed velocity times Δt. The exact distance in one step would be v(1 − e^(−μΔt))/μ, so the code's step is 2.5% shorter (0.9512 against 0.9754 of vΔt).
+
+How far a shot rolls. In continuous time a ball rolls v₀/μ before stopping. With the discrete steps it rolls
+
+    sum over k>=1 of v0 * e^(-k mu dt) * dt  =  v0 * dt * e^(-mu dt) / (1 - e^(-mu dt))  ~=  0.975 * v0
+
+A full-speed player striking a still ball sends it off at 0.9, so a shot rolls about 0.88 before stopping: just over half the pitch length. Scoring from your own half takes dribbling or a rebound, which is part of why the chaser keeps re-striking the ball.
+
+Speed cap. The ball's speed is capped at 1.5. A strike on a still ball reaches at most 0.9, but a ball already moving toward a player can come off faster (for example, a ball arriving at 0.9 against a player running at 0.6 leaves at 1.35). The cap only guards against rare chains of such hits.
+
+Collisions: restitution impulses
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every hit uses the same model: a frictionless contact along the unit normal n, where the relative velocity along n is reversed and scaled by the restitution e, and the tangential part is unchanged. The other body is treated as infinitely heavy (a player, a wall or a post), so only the ball's velocity changes:
+
+    (v_b' - v_o) . n = -e * (v_b - v_o) . n   =>   v_b' = v_b - (1 + e) * ((v_b - v_o) . n) * n
+
+Here v_o is the other body's velocity: the player's for a strike (e = 0.5) and zero for a wall or post (e = 0.8). The impulse applies only when the bodies are approaching ((v_b − v_o)·n < 0), so a ball resting against a player is not launched. The ball has no spin, and energy is lost on every hit and to friction, so the game has no energy conservation by design.
+
+Overlaps: positional correction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Instead of predicting the exact moment of contact (continuous collision detection), the code moves everything, then pushes overlapping bodies apart. This is simpler and stable, and it is accurate as long as nothing moves too far in one step:
+
+| Pair | Largest closing distance per step | Distance needed to pass through | Can it tunnel? |
+| Ball and player | 0.075 + 0.03 = 0.105 | 2 × 0.065 = 0.13 | No |
+| Player and player | 0.03 + 0.03 = 0.06 | 2 × 0.08 = 0.16 | No |
+| Ball and wall | 0.075 | wall has no far side: always pushed back | No (after the goal-mouth fix) |
+| Ball and post | 0.075 | 2 × 0.025 = 0.05 | Possible at top speed (not seen in tests) |
+
+One push can move a body into another overlap, so the corrections are repeated three times per step (Gauss–Seidel relaxation). The stress test of 500 random games found no overlap and nothing off the pitch after the three passes.
+
+Fairness and symmetry
+~~~~~~~~~~~~~~~~~~~~~
+
+The pitch is the same after the mirror map M(x, y) = (1.5 − x, y) that swaps the two halves. Blue's observations and actions go through M, so red and blue face exactly the same problem. The only order-dependent part of the physics is which player's ball contact is applied first in a step; a fresh coin flip per game per step makes that fair on average. Identical players then split evenly (3,215 red wins to 3,276 blue over 10,000 chaser-vs-chaser games).
+
+Continuous time
+~~~~~~~~~~~~~~~
+
+As DT → 0 the update rules become the differential equations above: dx/dt = v for players, dv/dt = −μv for the ball, with instantaneous restitution impulses at contacts. DT = 0.05 is the discretisation. When learning starts, the discount per step will be written as e^(−rΔt) so that a change of DT keeps the same time preference.
+
+SCORING, REWARDS AND EPISODE END
+--------------------------------
+
+- Goal: red scores when the ball's centre is past x = 1.525 (the whole ball inside the right-hand net); blue scores when it is past x = −0.025.
+- Reward: +1 to the scorer and −1 to the other player on the step of the goal, 0 on every other step. The game is zero-sum: the two rewards always add to 0. There is no discount inside step 1, since nothing is learned yet.
+- Episode end: a game ends on a goal or after 400 steps (20 seconds), whichever comes first. A game that reaches 400 steps without a goal is a draw. Finished games stay frozen while the others keep running.
+- Stall rule: the environment remembers where the ball was when it last moved 0.05. If 60 steps (3 seconds) pass without the ball moving 0.05 from that point, the game restarts from kickoff: players and ball go back to their start spots with new random offsets. There is no reward, and the 20-second clock keeps running.
+- Why the stall rule: without it, a ball pinned between two players or against a wall can sit for the rest of the game. That gives zero reward and no learning signal, which is the corner stalemate in the reference video. With square corners a ball can be trapped between a player and two walls; the stall rule restarts play if that happens (in the yardstick matches it almost never did).
+- Kickoff: red at (0.25, 0.5), blue at (1.25, 0.5), ball at (0.75, 0.5), each moved by a random amount up to 0.03 in x and y, all velocities zero.
+
+YARDSTICK PLAYERS
+-----------------
+
+Both yardsticks are fixed rules, not learned. Each reads its own 8-number observation and returns a desired velocity, so the same function plays red or blue.
+
+Random player. Every step it draws a velocity uniformly from the speed disk: angle uniform on (−π, π], radius 0.6 × √U with U uniform on [0, 1] (the square root makes every point in the disk equally likely). A new draw each step means it jitters near where it is rather than travelling.
+
+Scripted chaser. It always runs at full speed (0.6). With g the unit vector from the ball to a point just inside the attacked net, (1.54, 0.5):
+
+1. Aim point: the spot behind the ball on the line to the goal, at touching distance plus a small gap: ball − 0.07 g.
+2. If the chaser is goal-side of the ball (in front of it), it would push the ball backward, so it goes around: it heads for a point 0.105 to the side of the ball (on whichever side it already is) and 0.02 behind it.
+3. Otherwise it heads for the aim point.
+4. Once within 0.03 of the aim point, it stops aiming and runs along g, straight through the ball toward the goal.
+
+The chaser has no idea where the opponent is and no plan for a ball against a wall. Those gaps are why it doesn't win every game, and they leave room for a learned player to beat it.
+
+RUNNING MATCHES, RANDOMNESS AND REPLAYS
+---------------------------------------
+
+A match creates N games at once (2,000 here), resets them to kickoff, and calls both players and step until every game has finished. It counts red wins, blue wins and draws, the mean time of the goals that were scored, and stall restarts per game.
+
+Where game-to-game variety comes from. With no randomness every game would be identical. Three sources of chance make them differ:
+
+| Source | Detail |
+| Kickoff offsets | Each player and the ball start up to ±0.03 from their spot in x and y, drawn again at every kickoff and stall restart |
+| Contact order | Each step, a coin flip per game decides which player's push on the ball is applied first |
+| Random player | Its velocity draws, from its own random generator |
+
+All randomness comes from seeded generators, so every result here can be reproduced exactly: environment seed 5, random players seeded 11 (red) and 12 (blue).
+
+No outcome is set by hand. Wins, draws and goal times come only from the two rules meeting the physics. Identical players on both sides therefore act as a fairness check: their results should split evenly.
+
+Replays. For the first 4 games of each match-up, every frame stores six numbers: red's, blue's and the ball's (x, y). The replay page draws these frames on the rink, with a short fading trail behind each body and a tick on each player showing its direction of motion, which is computed from the last two frames.
+
+THE LIVE SIMULATION (ONE HTML FILE)
+-----------------------------------
+
+The file the_pitch_live.html runs the whole game in a browser with no install, server or internet connection. It is about 25 KB and has three parts: the page layout and styles, the game engine, and the code that runs and draws it.
+
+The engine is a line-for-line JavaScript port of env.py and yardsticks.py for one game at a time. It uses the same constants, the same step order, the same three contact passes with a coin flip for contact order, the same stall rule and the same two yardstick players. Blue's observations and actions go through the same mirror.
+
+Checking the port. The same 2,000-game match-ups were run in the JavaScript engine (with its own seeded random generator, mulberry32) and compared with Python:
+
+| Match-up | Python | JavaScript |
+| Random vs random | 100% draws | 100% draws |
+| Chaser (red) vs random | 93.4% red wins | 92.5% red wins |
+| Random vs chaser (blue) | 93.0% blue wins | 93.5% blue wins |
+| Chaser vs chaser | 34.3% / 31.7% / 34.1% draws | 32.8% / 31.1% / 36.2% draws |
+
+The small differences come from the two languages drawing different random numbers, not from different rules.
+
+Running in real time. Each animation frame (about 60 per second) measures the time since the last frame, multiplies it by the chosen speed (1×, 2×, 4× or 20×), and runs that many 0.05 s steps; leftover time carries to the next frame. At 1× the game therefore runs at 20 steps per real second, whatever the screen's frame rate. At most 400 steps run per frame so a slow device can't freeze. Drawing happens once per frame, after the steps.
+
+Players in the live file. Each side can be the chaser, the random player or a person on the keyboard. A keyboard player's velocity is the arrow or WASD direction at full speed (diagonals are scaled to the same 0.6). For blue, the keyboard velocity is converted into blue's mirrored frame before it goes into the engine, so all three player types use one interface. The live file uses the browser's random numbers, so each session plays out differently.
+
+Drawing. The canvas draws the pitch, markings and nets, then a fading trail of the last 30 frames for each body, then the players (with a tick showing their direction of motion) and the ball. The pitch markings are decoration and are never read by the engine.
+
+After a goal or a 20-second draw, the scoreboard updates, play pauses for 1.2 s (0.15 s at 20×), and a new game starts from kickoff.
+
+PHYSICS CHECKS AND MATCH RESULTS
+--------------------------------
+
+Every check matched the rules.
+
+| Check | Expected | Result |
+| Lone ball, speed after 1 s | ratio e^(−1) = 0.368 | 0.368 |
+| Ball fired at the top touchline at speed 1 | comes back at 0.8 of its impact speed, then slows | vy = −0.536 after 8 steps |
+| Ball fired into a corner | stays on the pitch | max distance outside 0 |
+| Ball into the right-hand net | red +1 | +1 |
+| Ball into the left-hand net | red −1 | −1 |
+| Ball clipping the right post | deflects, no goal | reward 0 |
+| Ball at the goal line beside the goal (y = 0.25) | bounces back, no goal | reward 0 |
+| 500 random games: players overlapping | never | max overlap 0 |
+| 500 random games: player off the pitch | never | max 0 |
+| 500 random games: ball off the pitch | never | 0 of all checks |
+| Still ball for 130 steps | restarts at steps 60 and 120 | 2 restarts |
+
+Yardstick matches: 2,000 games of up to 20 seconds per match-up, same seeds.
+
+| Red | Blue | Red wins | Blue wins | No goal | Mean time to goal | Stall restarts per game |
+| random | random | 0 (0%) | 0 (0%) | 2,000 (100%) | none | 6.00 |
+| chaser | random | 1,868 (93%) | 0 (0%) | 132 (7%) | 4.7 s | 0 |
+| random | chaser | 1 (0%) | 1,860 (93%) | 139 (7%) | 4.8 s | 0.0005 |
+| chaser | chaser | 686 (34%) | 633 (32%) | 681 (34%) | 5.7 s | 0.001 |
+
+Effect of the one rule change, rounded corners (the earlier rink) to square corners (the pitch), with everything else the same:
+
+| Match-up | Rounded corners | Square corners |
+| Random vs random | 100% draws | 100% draws |
+| Chaser (red) vs random | 89% red wins, 211 draws | 93% red wins, 132 draws |
+| Random vs chaser (blue) | 91% blue wins, 181 draws | 93% blue wins, 139 draws |
+| Chaser vs chaser | 674 / 680 / 646 draws | 686 / 633 / 681 draws |
+
+Square corners helped the chaser: it drew 132 games instead of 211. A likely reason, not tested separately, is that on the rounded rink a ball pushed toward the goal line could roll along the curved corner and away from the mouth.
+
+- Random vs random: no goals. Random players almost never reach the ball, so the stall rule restarts the game about every 3 seconds.
+- Chaser vs random: the chaser wins 93% on either side. In a diagnostic run of chaser (red) vs random, 99 of its 130 draws (76%) ended with the ball within 0.2 of the opponent's goal line, where the chaser keeps nudging the ball along the line instead of steering it into the mouth; 20 of those were in a corner.
+- Chaser vs chaser: 686 to 633 in this run. Over 10,000 more games (seeds 6 to 10) it was 3,215 to 3,276, within chance, so neither colour has an advantage.
+
+The replays, both tables and the rules can be viewed on the Pitch replay page; the game itself runs live in the_pitch_live.html.
+
+BUGS FIXED, LIMITATIONS AND CODE
+--------------------------------
+
+Two bugs the checks caught, both fixed before the results above:
+
+| Bug | Symptom | Fix |
+| Ball slipping into the net through the goal line | A fast ball fired at the goal line beside the goal (y = 0.25) crossed the line in one step and was then treated as inside the net, so it scored | A ball counts as in the net only if its y is inside the mouth, 0.35 to 0.65 |
+| Blue always touched the ball last | Contacts were applied red first, then blue, so blue's push always won. Two identical chasers gave blue 1,101 wins to red's 160 | A coin flip per game, per step, picks who touches first. The same match now splits 674 to 680 |
+
+Known limitations, kept simple on purpose for step 1:
+
+- Players have no momentum: velocity is set directly each step, so they can turn and stop instantly.
+- There is no kick action; shots come only from running into the ball.
+- The ball never goes out of play: the touchlines and goal lines are walls, so there are no throw-ins, goal kicks or corner kicks.
+- Posts are points, and a ball at top speed could in principle pass a post in one step (see the tunnelling table). No such case showed up in the checks.
+- The ball's position update uses the decayed speed, so each step's travel is 2.5% shorter than the exact continuous-time distance.
+- The stall rule restarts play without moving the clock back, so a game with many stalls has less real playing time.
+- Each of these is a candidate for a later one-at-a-time addition if it turns out to matter.
+
+Code (Python 3, NumPy only), in rink_step1.zip:
+
+| File | Contents |
+| rink/env.py | Constants, wall and goal-net geometry, contacts, the batched Rink class with reset, step, obs and the stall rule |
+| rink/yardsticks.py | The random player and the scripted chaser |
+| rink/play.py | Runs a match between two players and records results and replays |
+| rink/check_physics.py | The physics checks above; writes results_physics.json |
+| rink/run_yardsticks.py | The four yardstick match-ups; writes results_yardsticks.json and replays_step1.json |
+| rink/viewer_template.html | The replay page, filled with the results and replays |
+| rink/sim/engine.js | The JavaScript port of the game and yardsticks |
+| rink/sim/check_port.js | Runs the yardstick match-ups in JavaScript to compare with Python |
+| rink/sim/sim_template.html | The live simulation page; the engine is inlined to make the_pitch_live.html |
+
+The folder keeps the name rink from the first version; the code now describes the pitch (corner radius 0).
+
+To reproduce: python3 -m rink.check_physics, then python3 -m rink.run_yardsticks, from the folder that contains rink/. To check the JavaScript port: node rink/sim/check_port.js (needs Node.js).
